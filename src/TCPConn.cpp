@@ -1,288 +1,262 @@
-#include <stdexcept>
-#include <strings.h>
-#include <unistd.h>
-#include <cstring>
-#include <algorithm>
-#include <iostream>
 #include "TCPConn.h"
+#include "exceptions.h"
 #include "strfuncts.h"
+#include "singletonHelperFunctions.h"
+#include <algorithm>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <stdexcept>
+#include <sys/select.h> 
+#include <sys/types.h>
+#include <cstddef> 
+#include <unistd.h>
+#include <stdio.h>
+#include <iostream>
+#include <strings.h>
+#include <string.h>
+#include <string>
+#include <sstream>
+#include <vector>
+#include <map>
 
-// The filename/path of the password file
-const char pwdfilename[] = "passwd";
-
-TCPConn::TCPConn(){ // LogMgr &server_log):_server_log(server_log) {
-
-}
-
-
-TCPConn::~TCPConn() {
-
-}
-
-/**********************************************************************************************
- * accept - simply calls the acceptFD FileDesc method to accept a connection on a server socket.
- *
- *    Params: server - an open/bound server file descriptor with an available connection
- *
- *    Throws: socket_error for recoverable errors, runtime_error for unrecoverable types
- **********************************************************************************************/
-
-bool TCPConn::accept(SocketFD &server) {
-   return _connfd.acceptFD(server);
-}
-
-/**********************************************************************************************
- * sendText - simply calls the sendText FileDesc method to send a string to this FD
- *
- *    Params:  msg - the string to be sent
- *             size - if we know how much data we should expect to send, this should be populated
- *
- *    Throws: runtime_error for unrecoverable errors
- **********************************************************************************************/
-
-int TCPConn::sendText(const char *msg) {
-   return sendText(msg, strlen(msg));
-}
-
-int TCPConn::sendText(const char *msg, int size) {
-   if (_connfd.writeFD(msg, size) < 0) {
-      return -1;  
-   }
-   return 0;
-}
-
-/**********************************************************************************************
- * startAuthentication - Sets the status to request username
- *
- *    Throws: runtime_error for unrecoverable types
- **********************************************************************************************/
-
-void TCPConn::startAuthentication() {
-
-   // Skipping this for now
-   _status = s_username;
-
-   _connfd.writeFD("Username: "); 
-}
-
-/**********************************************************************************************
- * handleConnection - performs a check of the connection, looking for data on the socket and
- *                    handling it based on the _status, or stage, of the connection
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-void TCPConn::handleConnection() {
-
-   timespec sleeptime;
-   sleeptime.tv_sec = 0;
-   sleeptime.tv_nsec = 100000000;
-
-   try {
-      switch (_status) {
-         case s_username:
-            getUsername();
-            break;
-
-         case s_passwd:
-            getPasswd();
-            break;
-   
-         case s_changepwd:
-         case s_confirmpwd:
-            changePassword();
-            break;
-
-         case s_menu:
-            getMenuChoice();
-
-            break;
-
-         default:
-            throw std::runtime_error("Invalid connection status!");
-            break;
-      }
-   } catch (socket_error &e) {
-      std::cout << "Socket error, disconnecting.";
-      disconnect();
-      return;
-   }
-
-   nanosleep(&sleeptime, NULL);
-}
-
-/**********************************************************************************************
- * getUsername - called from handleConnection when status is s_username--if it finds user data,
- *               it expects a username and compares it against the password database
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-void TCPConn::getUsername() {
-   // Insert your mind-blowing code here
-}
-
-/**********************************************************************************************
- * getPasswd - called from handleConnection when status is s_passwd--if it finds user data,
- *             it assumes it's a password and hashes it, comparing to the database hash. Users
- *             get two tries before they are disconnected
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-void TCPConn::getPasswd() {
-   // Insert your astounding code here
-}
-
-/**********************************************************************************************
- * changePassword - called from handleConnection when status is s_changepwd or s_confirmpwd--
- *                  if it finds user data, with status s_changepwd, it saves the user-entered
- *                  password. If s_confirmpwd, it checks to ensure the saved password from
- *                  the s_changepwd phase is equal, then saves the new pwd to the database
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-void TCPConn::changePassword() {
-   // Insert your amazing code here
-}
-
-
-/**********************************************************************************************
- * getUserInput - Gets user data and includes a buffer to look for a carriage return before it is
- *                considered a complete user input. Performs some post-processing on it, removing
- *                the newlines
- *
- *    Params: cmd - the buffer to store commands - contents left alone if no command found
- *
- *    Returns: true if a carriage return was found and cmd was populated, false otherwise.
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-bool TCPConn::getUserInput(std::string &cmd) {
-   std::string readbuf;
-
-   // read the data on the socket
-   _connfd.readFD(readbuf);
-
-   // concat the data onto anything we've read before
-   _inputbuf += readbuf;
-
-   // If it doesn't have a carriage return, then it's not a command
-   int crpos;
-   if ((crpos = _inputbuf.find("\n")) == std::string::npos)
-      return false;
-
-   cmd = _inputbuf.substr(0, crpos);
-   _inputbuf.erase(0, crpos+1);
-
-   // Remove \r if it is there
-   clrNewlines(cmd);
-
-   return true;
-}
-
-/**********************************************************************************************
- * getMenuChoice - Gets the user's command and interprets it, calling the appropriate function
- *                 if required.
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-
-void TCPConn::getMenuChoice() {
-   if (!_connfd.hasData())
-      return;
-   std::string cmd;
-   if (!getUserInput(cmd))
-      return;
-   lower(cmd);      
-
-   // Don't be lazy and use my outputs--make your own!
-   std::string msg;
-   if (cmd.compare("hello") == 0) {
-      _connfd.writeFD("Hello back!\n");
-   } else if (cmd.compare("menu") == 0) {
-      sendMenu();
-   } else if (cmd.compare("exit") == 0) {
-      _connfd.writeFD("Disconnecting...goodbye!\n");
-      disconnect();
-   } else if (cmd.compare("passwd") == 0) {
-      _connfd.writeFD("New Password: ");
-      _status = s_changepwd;
-   } else if (cmd.compare("1") == 0) {
-      msg += "You want a prediction about the weather? You're asking the wrong Phil.\n";
-      msg += "I'm going to give you a prediction about this winter. It's going to be\n";
-      msg += "cold, it's going to be dark and it's going to last you for the rest of\n";
-      msg += "your lives!\n";
-      _connfd.writeFD(msg);
-   } else if (cmd.compare("2") == 0) {
-      _connfd.writeFD("42\n");
-   } else if (cmd.compare("3") == 0) {
-      _connfd.writeFD("That seems like a terrible idea.\n");
-   } else if (cmd.compare("4") == 0) {
-
-   } else if (cmd.compare("5") == 0) {
-      _connfd.writeFD("I'm singing, I'm in a computer and I'm siiiingiiiing! I'm in a\n");
-      _connfd.writeFD("computer and I'm siiiiiiinnnggiiinnggg!\n");
-   } else {
-      msg = "Unrecognized command: ";
-      msg += cmd;
-      msg += "\n";
-      _connfd.writeFD(msg);
-   }
+TCPConn::TCPConn(){
 
 }
 
-/**********************************************************************************************
- * sendMenu - sends the menu to the user via their socket
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-void TCPConn::sendMenu() {
-   std::string menustr;
+TCPConn::~TCPConn(){
 
-   // Make this your own!
-   menustr += "Available choices: \n";
-   menustr += "  1). Provide weather report.\n";
-   menustr += "  2). Learn the secret of the universe.\n";
-   menustr += "  3). Play global thermonuclear war\n";
-   menustr += "  4). Do nothing.\n";
-   menustr += "  5). Sing. Sing a song. Make it simple, to last the whole day long.\n\n";
-   menustr += "Other commands: \n";
-   menustr += "  Hello - self-explanatory\n";
-   menustr += "  Passwd - change your password\n";
-   menustr += "  Menu - display this menu\n";
-   menustr += "  Exit - disconnect.\n\n";
+}
 
-   _connfd.writeFD(menustr);
+//accept the client connection and assign the fd to connfd
+int TCPConn::acceptFunc(int server){
+    sockaddr_in clientAddr {};
+    socklen_t clientAddrLen = (socklen_t)sizeof(clientAddr);
+    connfd = accept(server, (struct sockaddr *)&clientAddr, &clientAddrLen);
+	this-> ipString = inet_ntoa(clientAddr.sin_addr);
+	if(connfd < 0){
+		std::cout << "failed to connect " << strerror(errno) << "\n";
+		return -1;
+	}
+	try{
+		//check if new client is on whitelist. If not, disconnect
+		bool onList = singletonHelperFunctions::checkWhitelist(clientAddr);
+		if(onList != 1){ 
+			singletonHelperFunctions::log("\nunidentified IP tried to connect: ", 35);		
+			singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+			this->disconnect(); 
+			return -1;
+		}
+		singletonHelperFunctions::log("\nRecognized IP tried to connect: ", 33);
+		singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+		return connfd;
+	}
+	catch(logfile_error &e) {
+      	std::cerr << "initialization failed: " << e.what() << std::endl;
+	  	this->disconnect();
+      	return -1;
+    }	   	
+}
+
+//once connected retrieve the commands from the client and attempt to process them
+void TCPConn::handleConnection(){
+	char incomingMessage[1025];
+    memset(incomingMessage, 0, 1025);
+    ssize_t size = read(this->connfd, incomingMessage, 1024); 
+	if(size < 0){
+		return;
+	}//if read returns an error 
+
+	std::string nextCmd = "";
+	std::stringstream cmds(incomingMessage);
+	//
+    while(std::getline(cmds,nextCmd,'\n')){
+		commands.push_back(nextCmd);
+  	}//https://stackoverflow.com/questions/13172158/c-split-string-by-line
+
+	this->getMenuChoice();
+}
+
+//Execute commands in the order they are received
+void TCPConn::getMenuChoice(){
+	while(!this->commands.empty()){
+		std::string cmd = commands.back();
+		cmd.erase(std::remove(cmd.begin(), cmd.end(), ' '), cmd.end());
+		commands.pop_back();
+		if(cmd.compare("1") == 0) { this->sendText("16 Dec", 6); } 
+		else if(cmd.compare("2") == 0) { this->sendText("0700", 4); } 
+		else if(cmd.compare("3") == 0) { this->sendText("Snow", 4); } 
+		else if(cmd.compare("4") == 0) { this->sendText("Full", 4); } 
+		else if(cmd.compare("5") == 0) { this->sendText("slack", 5); }
+		else if(cmd.compare("hello") == 0) { this->sendText("Welcome to the server!", 22); }
+		else if(cmd.compare("menu") == 0) { this->sendMenu(); } 
+		else if(cmd.compare("exit") == 0) { 
+			singletonHelperFunctions::log("\n", 1);
+			singletonHelperFunctions::log(this->username.c_str(), (int)this->username.length());
+			singletonHelperFunctions::log(" disconnected with ip: ", 23);
+			singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+			this->disconnect(); 
+		} 
+		else if(cmd.compare("passwd") == 0) { this->changePassword(); } 
+		else { this->sendText("Invalid option. Type 'menu' to see the list of available options", 64); } 
+	}
+}
+
+int TCPConn::sendText(const char *msg, int size){
+	char sendbuffer[size+1];
+    snprintf(sendbuffer, sizeof(sendbuffer), "%s", msg);
+    int ret = write(this->connfd, sendbuffer, strlen(sendbuffer));
+	return ret;
 }
 
 
-/**********************************************************************************************
- * disconnect - cleans up the socket as required and closes the FD
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-void TCPConn::disconnect() {
-   _connfd.closeFD();
+void TCPConn::sendMenu(){
+    std::string s = "<=Welcome to the server!" ; //22 chars long
+	for (int i = 0; i < 82; i++) {
+		s += "=";
+	}
+	s += "=>\n[";
+    for (int i = 0; i < 106; i++) {
+		s += " ";
+	}
+    s += "]\n";
+    s += "[OPTIONS: 1-Date 2-Time 3-Weather 4-Moon phase 5-Tide"; //52
+	for (int i = 0; i < 54; i++) {
+		s += " ";
+	}
+	s += "]\n";
+    s += "[ADDITIONAL OPTIONS: 'passwd'-Change your password 'exit'-Disconnect from server 'menu'-Display main menu  ]\n[";
+    for (int i = 0; i < 106; i++) {
+		s += " ";
+	}
+    s += "]\n";
+    s += "<";
+	for (int i = 0; i < 106 ; i++) {
+		s += "=";
+	}
+	s += ">";
+
+    //send menu to client
+	int len = s.length();
+    this->sendText(s.c_str(), len);
+}
+
+void TCPConn::disconnect(){
+	int retV = close(this->connfd);
+	connfd = -1;
+	if(retV < 0){ 
+        throw socket_error(std::string("failed to close socket ") + strerror(errno)); 
+    }
+}
+
+bool TCPConn::isConnected(){
+	if(connfd < 0){
+		return false;
+	}
+	return true;
 }
 
 
-/**********************************************************************************************
- * isConnected - performs a simple check on the socket to see if it is still open 
- *
- *    Throws: runtime_error for unrecoverable issues
- **********************************************************************************************/
-bool TCPConn::isConnected() {
-   return _connfd.isOpen();
+//first get username and check then password
+bool TCPConn::startAuthentication(){
+	this->getUsername();
+	if(!singletonHelperFunctions::checkUsername(this->username.c_str())){
+		singletonHelperFunctions::log("\n", 1);
+		singletonHelperFunctions::log(this->username.c_str(), (int)this->username.length());
+		singletonHelperFunctions::log(" tried to connect with unrecognized username and ip: ", 53);
+		singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+		this->disconnect();
+		return false;
+	}
+
+	if(!this->getPasswd()){
+		singletonHelperFunctions::log("\n", 1);
+		singletonHelperFunctions::log(this->username.c_str(), (int)this->username.length());
+		singletonHelperFunctions::log(" entered wrong password twice with ip: ", 39);
+		singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+		this->disconnect();
+		return false;
+	}
+
+	singletonHelperFunctions::log("\n", 1);
+	singletonHelperFunctions::log(this->username.c_str(), (int)this->username.length());
+	singletonHelperFunctions::log(" successfully connected with ip: ", 33);
+	singletonHelperFunctions::log(this->ipString.c_str(), (int)this->ipString.length());
+	return true;
 }
 
-/**********************************************************************************************
- * getIPAddrStr - gets a string format of the IP address and loads it in buf
- *
- **********************************************************************************************/
-void TCPConn::getIPAddrStr(std::string &buf) {
-   return _connfd.getIPAddrStr(buf);
+//get input from user and set username
+void TCPConn::getUsername(){
+	
+    this->sendText("\nUsername: ", 12);
+
+	char incomingMessage[1025];
+    memset(incomingMessage, 0, 1025);
+    ssize_t size = read(this->connfd, incomingMessage, 1024); 
+	if(size < 0){
+		return;
+	}//if read returns an error
+	std::string uname(incomingMessage);
+    clrNewlines(uname);      
+	
+	this->username = uname;
+
 }
 
+//get input from user and call password helper function
+bool TCPConn::getPasswd(){
+	
+	for(int i = 0; i < 2; i++){
+		this->sendText("\nPassword: ", 12);
+
+		char incomingMessage[1025];
+    	memset(incomingMessage, 0, 1025);
+    	ssize_t size = read(this->connfd, incomingMessage, 1024); 
+		if(size < 0){
+			return false;
+		}//if read returns an error
+		std::string pass(incomingMessage);
+    	clrNewlines(pass);     
+
+		bool check =  singletonHelperFunctions::checkPasswd(this->username.c_str(), pass.c_str());
+		if(check){ return check; }
+	}
+	return false;
+}
+
+
+//change the users password
+void TCPConn::changePassword(){
+	this->sendText("\nNew Password: ", 16);
+
+	char incomingMessage[1025];
+    memset(incomingMessage, 0, 1025);
+    ssize_t size = read(this->connfd, incomingMessage, 1024); 
+	if(size < 0){
+		return;
+	}//if read returns an error
+	std::string pass(incomingMessage);
+    clrNewlines(pass);     
+
+	this->newPwd = pass;
+
+	this->sendText("\nEnter New Password Again: ", 28);
+
+    memset(incomingMessage, 0, 1025);
+    size = read(this->connfd, incomingMessage, 1024); 
+	if(size < 0){
+		return;
+	}//if read returns an error
+	std::string pass2(incomingMessage);
+    clrNewlines(pass2);     
+
+	if(this->newPwd.compare(pass) == 0){
+		std::cout << "entering change pass func \n";
+		bool check = singletonHelperFunctions::changePasswd(this->username.c_str(), pass2.c_str());
+		std::cout << __LINE__ << "\n";
+	}
+
+}

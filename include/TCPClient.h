@@ -3,7 +3,7 @@
 
 #include <string>
 #include "Client.h"
-#include "FileDesc.h"
+#include "exceptions.h"
 
 // The amount to read in before we send a packet
 const unsigned int stdin_bufsize = 50;
@@ -21,17 +21,8 @@ public:
    virtual void closeConn();
 
 private:
-   int readStdin();
 
-   // Stores the user's typing
-   std::string _in_buf;
-
-   // Class to manage our client's network connection
-   SocketFD _sockfd;
- 
-   // Manages the stdin FD for user inputs
-   TermFD _stdin;
-
+   int client;
 };
 
 

@@ -1,20 +1,31 @@
-#include <sys/types.h>
+#include "TCPServer.h"
+#include "TCPConn.h"
+#include "exceptions.h"
+#include "singletonHelperFunctions.h"
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <sys/select.h> 
+#include <sys/types.h>
+#include <cstddef> 
 #include <unistd.h>
-#include <fcntl.h>
-#include <stdexcept>
-#include <strings.h>
-#include <vector>
+#include <stdio.h>
 #include <iostream>
-#include <memory>
 #include <sstream>
-#include "TCPServer.h"
+#include <strings.h>
+#include <string.h>
+#include <string>
+#include <thread>
+#include <chrono>
+#include <cstring>
+#include <map>
 
-TCPServer::TCPServer(){ // :_server_log("server.log", 0) {
+TCPServer::TCPServer() {
+
 }
-
 
 TCPServer::~TCPServer() {
 
@@ -28,17 +39,22 @@ TCPServer::~TCPServer() {
  **********************************************************************************************/
 
 void TCPServer::bindSvr(const char *ip_addr, short unsigned int port) {
+    listener = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    if(listener < 0){ 
+        throw socket_error(std::string("failed to create socket ") + strerror(errno)); 
+    } //if program fails to create server socket throw exception
 
-   struct sockaddr_in servaddr;
+    sockaddr_in listenerInfo;
+    listenerInfo.sin_family = AF_INET;
+    listenerInfo.sin_port = htons(port);
+    inet_pton(AF_INET, ip_addr, &listenerInfo.sin_addr);
+    
+    int retV = bind(listener, (sockaddr*)&listenerInfo, sizeof(listenerInfo));
+    if(retV < 0){ 
+        throw socket_error(std::string("failed to create socket ") + strerror(errno)); 
+    }//if program fails to bind server socket throw exception
 
-   // _server_log.writeLog("Server started.");
-
-   // Set the socket to nonblocking
-   _sockfd.setNonBlocking();
-
-   // Load the socket information to prep for binding
-   _sockfd.bindFD(ip_addr, port);
- 
+    singletonHelperFunctions::log("\nserver started up", 18);
 }
 
 /**********************************************************************************************
@@ -50,71 +66,72 @@ void TCPServer::bindSvr(const char *ip_addr, short unsigned int port) {
  **********************************************************************************************/
 
 void TCPServer::listenSvr() {
+    int retV = listen(listener, SOMAXCONN); 
+    if(retV < 0){ 
+        throw socket_error(std::string("server failed to listen ") + strerror(errno)); 
+    } // if server fails to listen throw exception
 
-   bool online = true;
-   timespec sleeptime;
-   sleeptime.tv_sec = 0;
-   sleeptime.tv_nsec = 100000000;
-   int num_read = 0;
-
-   // Start the server socket listening
-   _sockfd.listenFD(5);
-
+    std::map<int, TCPConn> connections;
+    fd_set fileDescriptors;
+    FD_ZERO(&fileDescriptors);
+    FD_SET(listener, &fileDescriptors);
     
-   while (online) {
-      struct sockaddr_in cliaddr;
-      socklen_t len = sizeof(cliaddr);
+    while(true){
+        fd_set localFDset = fileDescriptors;
+        std::vector<int> keys;
 
-      if (_sockfd.hasData()) {
-         TCPConn *new_conn = new TCPConn();
-         if (!new_conn->accept(_sockfd)) {
-            // _server_log.strerrLog("Data received on socket but failed to accept.");
-            continue;
-         }
-         std::cout << "***Got a connection***\n";
+        //Find all key values in map, keys are the file descriptor numbers
+        for(std::map<int,TCPConn>::iterator it = connections.begin(); it != connections.end(); ++it) {
+            keys.push_back(it->first);
+        }//https://stackoverflow.com/questions/110157/how-to-retrieve-all-keys-or-values-from-a-stdmap-and-put-them-into-a-vector
+        
+        //use keys to check if all are still open, if not clear those that are not
+        for(int i: keys){
+            if (!connections[i].isConnected()){
+                FD_CLR(i, &localFDset);
+                FD_CLR(i, &fileDescriptors);
+                connections.erase(i);
+                keys.clear();
 
-         _connlist.push_back(std::unique_ptr<TCPConn>(new_conn));
+                //only need to redo if an fd was removed
+                for(std::map<int,TCPConn>::iterator it = connections.begin(); it != connections.end(); ++it) {
+                    keys.push_back(it->first);
+                }
+            }
+        }
+        keys.push_back(listener);
 
-         // Get their IP Address string to use in logging
-         std::string ipaddr_str;
-         new_conn->getIPAddrStr(ipaddr_str);
-
-
-         new_conn->sendText("Welcome to the CSCE 689 Server!\n");
-
-         // Change this later
-         new_conn->startAuthentication();
-      }
-
-      // Loop through our connections, handling them
-      std::list<std::unique_ptr<TCPConn>>::iterator tptr = _connlist.begin();
-      while (tptr != _connlist.end())
-      {
-         // If the user lost connection
-         if (!(*tptr)->isConnected()) {
-            // Log it
-
-            // Remove them from the connect list
-            tptr = _connlist.erase(tptr);
-            std::cout << "Connection disconnected.\n";
-            continue;
-         }
-
-         // Process any user inputs
-         (*tptr)->handleConnection();
-
-         // Increment our iterator
-         tptr++;
-      }
-
-      // So we're not chewing up CPU cycles unnecessarily
-      nanosleep(&sleeptime, NULL);
-   } 
-
-
-   
+        int socketCount = select(FD_SETSIZE, &localFDset, nullptr, nullptr, nullptr);
+        if(socketCount > 0){
+		    for (int i: keys)
+		    {
+			    if(FD_ISSET(i, &localFDset)){
+				    if(i == listener){
+                        TCPConn tp;
+                        int clientID = tp.acceptFunc(i);
+                        if(clientID > 0){
+                            bool auth = tp.startAuthentication();
+                            if(auth){
+                                connections.emplace(clientID, tp);
+                                FD_SET(clientID, &fileDescriptors);
+                                tp.sendMenu();
+                            }
+                        }
+				    }
+                    else{
+                        connections[i].handleConnection();
+                    }
+			    }
+		    }
+        }
+        else{ 
+            std::cout << "select function returned -1 " << strerror(errno) << "\n";
+            break;
+        }
+    std::this_thread::sleep_for (std::chrono::milliseconds(10));
+    }
+			
 }
-
 
 /**********************************************************************************************
  * shutdown - Cleanly closes the socket FD.
@@ -123,8 +140,8 @@ void TCPServer::listenSvr() {
  **********************************************************************************************/
 
 void TCPServer::shutdown() {
-
-   _sockfd.closeFD();
+    int retV = close(listener);
+    if(retV < 0){ 
+        throw socket_error(std::string("failed to close socket ") + strerror(errno)); 
+    } // if socket fails to close
 }
-
-
