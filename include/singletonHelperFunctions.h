@@ -27,5 +27,5 @@ private:
    PasswdMgr* pwd;
    
    std::map< std::string, std::string > map;
-   const std::string filePath = "whitelist.txt";
+   const std::string filePath = "whitelist";
 };
